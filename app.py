@@ -13,13 +13,6 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
 
-from flask import Flask, request, render_template_string
-from werkzeug.utils import secure_filename
-import os
-import time
-import json
-import amaas.grpc
-
 # Fetch API Key and Region from environment variables
 API_KEY = os.getenv("VISION_ONE_API_KEY")
 REGION = os.getenv("VISION_ONE_REGION", "us-east-1")  # Default to "us-east-1"
@@ -27,105 +20,6 @@ REGION = os.getenv("VISION_ONE_REGION", "us-east-1")  # Default to "us-east-1"
 # Ensure API key is set
 if not API_KEY:
     raise ValueError("VISION_ONE_API_KEY environment variable is not set!")
-
-# Initialize the Trend Vision One File Security SDK
-try:
-    handle = amaas.grpc.init_by_region(region=REGION, api_key=API_KEY)
-except Exception as err:
-    print(f"Error initializing AMaaS handle: {err}")
-
-# Initialize Flask application
-app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads/'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit
-
-if not os.path.exists(app.config['UPLOAD_FOLDER']):
-    os.makedirs(app.config['UPLOAD_FOLDER'])
-
-# HTML Template
-HTML_TEMPLATE = '''
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>File Upload</title>
-    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-dark text-white">
-    <div class="container mt-5">
-        <h1 class="text-center">Upload Your File</h1>
-        <form action="/upload" method="post" enctype="multipart/form-data">
-            <div class="form-group">
-                <label for="fileInput">Choose file:</label>
-                <input type="file" class="form-control-file" id="fileInput" name="file" required>
-            </div>
-            <button type="submit" class="btn btn-success btn-block">Upload</button>
-        </form>
-        {% if message %}
-        <div class="alert mt-3" role="alert">
-            {{ message | safe }}
-        </div>
-        {% endif %}
-    </div>
-</body>
-</html>
-'''
-
-@app.route('/', methods=['GET'])
-def index():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return render_template_string(HTML_TEMPLATE, message='<div class="alert alert-warning">No file part.</div>'), 400
-    file = request.files['file']
-    if file.filename == '':
-        return render_template_string(HTML_TEMPLATE, message='<div class="alert alert-warning">No selected file.</div>'), 400
-
-    if file:
-        filename = secure_filename(file.filename)
-        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
-        # Save the file temporarily for scanning
-        file.save(temp_path)
-
-        # Scan the file using Trend Micro Vision One SDK
-        try:
-            start_time = time.perf_counter()
-            result = amaas.grpc.scan_file(channel=handle, file_name=temp_path, pml=False, tags=None)
-            elapsed = time.perf_counter() - start_time
-            print(f"Scan executed in {elapsed:0.2f} seconds.")
-
-            # Parse the JSON response
-            scan_result = json.loads(result) if isinstance(result, str) else result
-
-            if scan_result.get("foundMalwares"):
-                # If malware is found, delete the file and display a warning
-                malware_names = [malware.get("malwareName") for malware in scan_result.get("foundMalwares")]
-                os.remove(temp_path)  # Delete infected file
-                message = f"""
-                <div class="alert alert-danger">
-                    <strong>File upload blocked!</strong><br>
-                    Detected malware: {", ".join(malware_names)}
-                </div>
-                """
-                return render_template_string(HTML_TEMPLATE, message=message)
-
-            else:
-                return render_template_string(HTML_TEMPLATE, message=f'''
-                    <div class="alert alert-success">
-                        <strong>File uploaded successfully. No malware detected!</strong>
-                    </div>
-                ''')
-
-        except Exception as e:
-            print(f"Error scanning file: {e}")
-            return render_template_string(HTML_TEMPLATE, message='<div class="alert alert-danger">An error occurred while scanning the file.</div>')
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=80)
 
 
 # Create an AMaaS handle object
